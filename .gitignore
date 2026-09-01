@@ -1,0 +1,9 @@
+# 绝不能提交真实凭据
+config.json
+*.token
+.ha_token
+__pycache__/
+*.pyc
+
+# 公开版构建产物，不进版本库
+build/

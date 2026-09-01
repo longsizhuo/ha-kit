@@ -1,0 +1,141 @@
+
+
+- id: welcome_home
+  alias: 回家欢迎仪式
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: event.YOUR_LOCK_lock_event_e_2_1020
+  condition:
+    - condition: template
+      value_template: >-
+        {{ state_attr(trigger.entity_id, '操作位置') == 2
+           and state_attr(trigger.entity_id, '锁动作') == 2 }}
+  action:
+    # ── 第一层：灯，亮度分时段 ──
+    - choose:
+        # 天还亮着就不开
+        - conditions:
+            - condition: state
+              entity_id: sun.sun
+              state: above_horizon
+          sequence: []
+        # 深夜：只给够看路的亮度，别刺眼、别吵醒人
+        - conditions:
+            - condition: time
+              after: "23:00:00"
+              before: "06:00:00"
+          sequence:
+            - service: light.turn_on
+              target: {entity_id: light.YOUR_LAMP_s_2_light}
+              data: {brightness: 60}
+        # 傍晚到睡前：正常亮度
+        - conditions: []
+          sequence:
+            - service: light.turn_on
+              target: {entity_id: light.YOUR_LAMP_s_2_light}
+              data: {brightness: 180}
+
+    # ── 第二层：播报（艾露猫 persona）──
+    # 人设约束见 ~/.hermes/SOUL.md 与 ChatBot/CLAUDE.md：自称艾露猫、对谁都叫"老大"、
+    # 【一条消息最多一个"喵"】、忠诚但笨拙、会自我拆穿。
+    # TTS 特有约束：不能带 emoji（会被念出来）、要短（语音不是文字）。
+    # 按情境分组随机，避免天天同一句听腻。
+    - choose:
+        - conditions:
+            - condition: time
+              after: "08:00:00"
+              before: "23:00:00"
+          sequence:
+            - service: notify.send_message
+              target:
+                entity_id: notify.YOUR_SPEAKER_play_text_a_5_1
+              data:
+                message: >-
+                  {%- set t = state_attr('climate.YOUR_AC','current_temperature') | round(0) -%}
+                  {%- set src = states.binary_sensor.someone_home -%}
+                  {%- set out_h = ((now() - src.last_changed).total_seconds() / 3600) if src else 0 -%}
+                  {#- 「喵」必须落在整条消息的【最后一句】，且全条最多一个。
+                      所以：问候句一律不带喵，洗衣机提醒插在中间也不带喵，
+                      结尾的温度句负责收尾并带上唯一的那个喵。 -#}
+                  {%- set greet = [
+                       "欢迎老大回来。",
+                       "老大回来啦。",
+                       "老大老大，你回来啦。",
+                       "欢迎回家老大，艾露猫一直在等着呢。",
+                       "老大回来啦，艾露猫的尾巴都等直了。"
+                     ] if out_h >= 6 else [
+                       "欢迎老大回来。",
+                       "老大回来啦，这次出去得挺快的。",
+                       "咦，老大这就回来了，艾露猫的零食还没偷吃完呢。",
+                       "欢迎回来老大，艾露猫刚准备偷懒就被抓到了。"
+                     ] -%}
+                  {%- set hot = [
+                       "屋里 " ~ t ~ " 度，有点闷，要不要开空调喵。",
+                       "屋里 " ~ t ~ " 度，艾露猫觉得有点热，不过艾露猫是猫，可能不算数喵。"
+                     ] -%}
+                  {%- set nice = [
+                       "屋里 " ~ t ~ " 度，刚刚好喵。",
+                       "屋里 " ~ t ~ " 度，艾露猫觉得很舒服喵。"
+                     ] -%}
+                  {%- set w = states('sensor.YOUR_WASHER_run_status_p_2_11') -%}
+                  {{ greet | random }}
+                  {%- if w not in ['unavailable','unknown','none'] and '完' in w %}
+                  对了，洗衣机早就洗好了，艾露猫盯着它停的。
+                  {%- endif %}
+                  {{ (hot if t >= 28 else nice) | random }}
+
+# 出门自动关空调。
+#
+# 触发器用 binary_sensor.someone_home 翻 off，【不用】门锁的内侧开门事件——
+# 开门不等于离开：2026-08-27 00:08 那次内侧开门，人只是开了下门，PIR 和网络都没消失。
+# 拿门锁当触发器会在那种时候把空调关掉，而人还在家。
+#
+# 代价是慢约 7 分钟（实测出门到网络确认 435/454 秒），换来的是不会误关。
+# 这个方向的取舍是对的：晚关 7 分钟只多花几分钱，误关会让在家的人热着。
+#
+# 背景：2026-08-25 空调在空房子里制冷 23 小时，一天 8.3 kWh。
+- id: auto_ac_off_when_away
+  alias: 出门自动关空调
+  mode: single
+  trigger:
+    # 用【必带手机】而不是 someone_home。
+    # 2026-08-28 早上用户出门时忘带了一台手机，那台留在家的手机让「所有陌生设备
+    # 都消失」这个判据永远等不到成立，空调没关。人可以忘带某一台，但总有一台是
+    # 绝对会带的——用那台当判据更贴近「人在不在」。
+    - platform: state
+      entity_id: binary_sensor.carried_phone_home
+      from: "on"
+      to: "off"
+  condition:
+    # 只在空调真的开着时才动手，避免无意义的服务调用
+    - condition: not
+      conditions:
+        - condition: state
+          entity_id: climate.YOUR_AC
+          state: "off"
+    # 有客人在就不关。亮亮偶尔来做客——主人出门时客人还在，不该把空调关掉。
+    # guest_devices 只统计「既不是必带、也不是本人其他设备」的设备，
+    # 所以主人自己忘带的手机不会误挡（2026-08-28 早上就是这个场景）。
+    - condition: numeric_state
+      entity_id: sensor.guest_devices
+      below: 1
+    # 安全阀：客厅 PIR 最近 10 分钟内有人动过就不关。
+    # 依据「设备信号只能升不能降」——设备有活动=确定有人（必须有人动手），
+    # 设备静默则什么都推不出。所以 PIR 只用来【阻止】关空调，不用来触发关空调。
+    # 这道阀挡的是网络假阴性：万一三台设备同时掉线被误判成没人，PIR 能把它拦下来。
+    - condition: template
+      value_template: >-
+        {%- set pir = states.event.YOUR_DIFFUSER_someone_move_e_4_3 -%}
+        {{ pir is none or (now() - pir.last_changed).total_seconds() > 600 }}
+  action:
+    - service: climate.turn_off
+      target:
+        entity_id: climate.YOUR_AC
+    - service: logbook.log
+      data:
+        name: 出门自动关空调
+        message: >-
+          检测到全家无人（门锁离家 + 网络确认），已关闭空调。
+          关闭前状态 {{ states('climate.YOUR_AC') }}，
+          室温 {{ state_attr('climate.YOUR_AC','current_temperature') }} 度。

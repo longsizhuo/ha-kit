@@ -1,0 +1,7 @@
+# 家里常驻设备白名单——这里面的不算「人」。
+# 两种写法：
+#   <MAC>              家电用，MAC 烧死不变
+#   host:<mDNS主机名>   手机/平板用；iOS 隐私 MAC 每次都变，但 mDNS 主机名稳定
+AA:BB:CC:DD:EE:FF   # 路由器
+AA:BB:CC:DD:EE:F1   # 电视
+host:ipad.local     # 常驻不外带的平板
