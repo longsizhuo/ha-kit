@@ -7,3 +7,5 @@ __pycache__/
 
 # 公开版构建产物，不进版本库
 build/
+publish.log
+PUBLISH_FAILED
